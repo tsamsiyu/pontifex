@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pontifex-operator
+  namespace: pontifex-system
+  labels:
+    app.kubernetes.io/name: pontifex-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pontifex-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pontifex-operator
+    spec:
+      serviceAccountName: pontifex-operator
+      containers:
+      - name: operator
+        image: ghcr.io/tsamsiyu/pontifex-operator:latest
+        args:
+        - --config=/etc/pontifex/operator.yaml
+        env:
+        - name: PONTIFEX_ASN
+          value: "65000"
+        - name: PONTIFEX_AGENT_IMAGE
+          value: ghcr.io/tsamsiyu/pontifex-agent:latest
+        ports:
+        - containerPort: 8080
+          name: metrics
+        - containerPort: 8081
+          name: probes
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: probes
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: probes
+        volumeMounts:
+        - name: config
+          mountPath: /etc/pontifex
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
+      volumes:
+      - name: config
+        configMap:
+          name: pontifex-operator-config

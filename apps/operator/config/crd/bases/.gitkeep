@@ -1,0 +1,2 @@
+# Generated CRD manifests land here via `task generate`. Tracked so
+# `kubectl apply -k` works on a fresh checkout once generation has run.

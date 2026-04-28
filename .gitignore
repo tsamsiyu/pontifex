@@ -1,0 +1,9 @@
+/bin/
+*.test
+*.out
+.DS_Store
+.idea/
+.vscode/
+go.work.sum
+.claude/plans
+.claude/prompts

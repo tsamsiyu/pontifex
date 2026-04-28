@@ -1,0 +1,16 @@
+domain: pontifex.io
+layout:
+- go.kubebuilder.io/v4
+projectName: pontifex-operator
+repo: github.com/tsamsiyu/pontifex/apps/operator
+resources:
+- api:
+    crdVersion: v1
+    namespaced: false
+  controller: true
+  domain: pontifex.io
+  group: pontifex
+  kind: NetworkOverlay
+  path: github.com/tsamsiyu/pontifex/api/v1alpha1
+  version: v1alpha1
+version: "3"

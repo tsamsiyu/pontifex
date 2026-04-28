@@ -1,0 +1,7 @@
+go 1.23
+
+use (
+	./api
+	./apps/agent
+	./apps/operator
+)

@@ -1,0 +1,201 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: networkoverlays.pontifex.io
+spec:
+  group: pontifex.io
+  names:
+    kind: NetworkOverlay
+    listKind: NetworkOverlayList
+    plural: networkoverlays
+    shortNames:
+    - "no"
+    singular: networkoverlay
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.community
+      name: Community
+      type: string
+    - jsonPath: .spec.edges[*]
+      name: Edges
+      priority: 1
+      type: integer
+    - jsonPath: .spec.peers[*]
+      name: Peers
+      priority: 1
+      type: integer
+    - jsonPath: .status.gateways[*]
+      name: Gateways
+      priority: 1
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          NetworkOverlay declares an overlay topology between this cluster and
+          peer clusters.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: NetworkOverlaySpec describes the desired topology of a single
+              overlay.
+            properties:
+              edges:
+                description: |-
+                  Edges declare local pods that should be reachable from peers via a
+                  stable virtual IP.
+                items:
+                  description: Edge selects a local pod that should be exposed to
+                    peers under a virtual IP.
+                  properties:
+                    podLabelsSelector:
+                      description: |-
+                        PodLabelsSelector is a label-selector string parsed via
+                        k8s.io/apimachinery/pkg/labels.Parse (e.g. "app=foo,tier in (web,api)").
+                      type: string
+                    podNamespace:
+                      type: string
+                    virtualIP:
+                      type: string
+                  required:
+                  - podLabelsSelector
+                  - podNamespace
+                  - virtualIP
+                  type: object
+                type: array
+              peers:
+                description: Peers are external clusters reachable over WireGuard.
+                items:
+                  description: Peer is an external cluster participating in this overlay.
+                  properties:
+                    allowedIPs:
+                      items:
+                        type: string
+                      type: array
+                    asn:
+                      format: int32
+                      type: integer
+                    endpoint:
+                      type: string
+                    name:
+                      type: string
+                    publicKey:
+                      type: string
+                  required:
+                  - allowedIPs
+                  - asn
+                  - endpoint
+                  - name
+                  - publicKey
+                  type: object
+                type: array
+              virtualCIDR:
+                description: VirtualCIDR is the pool from which edge virtual IPs are
+                  drawn.
+                type: string
+            required:
+            - virtualCIDR
+            type: object
+          status:
+            description: NetworkOverlayStatus is operator-managed.
+            properties:
+              community:
+                description: |-
+                  Community is the operator-allocated BGP community for this overlay,
+                  formatted as "<clusterASN>:<n>".
+                type: string
+              edges:
+                description: Edges mirror spec.edges with operator-resolved pod placement.
+                items:
+                  description: EdgeStatus reports the resolved pod for one Edge.
+                  properties:
+                    nodeIP:
+                      type: string
+                    nodeName:
+                      type: string
+                    podIP:
+                      type: string
+                    podName:
+                      type: string
+                    podNamespace:
+                      type: string
+                    ready:
+                      type: boolean
+                    virtualIP:
+                      type: string
+                  required:
+                  - podNamespace
+                  - ready
+                  - virtualIP
+                  type: object
+                type: array
+              gateways:
+                description: |-
+                  Gateways are the operator-discovered gateway nodes carrying the
+                  configured gateway-role label.
+                items:
+                  description: Gateway is a node selected as a gateway for this overlay.
+                  properties:
+                    isSecondary:
+                      type: boolean
+                    nodeIP:
+                      type: string
+                    nodeName:
+                      type: string
+                    publicIP:
+                      type: string
+                  required:
+                  - isSecondary
+                  - nodeIP
+                  - nodeName
+                  type: object
+                type: array
+              publicKey:
+                description: |-
+                  PublicKey is the WireGuard public key for this overlay, exposed so
+                  peers can configure their side.
+                type: string
+              wgSecretRef:
+                description: |-
+                  WGSecretRef references the Secret holding the per-overlay WireGuard
+                  private key, mounted into gateway pods by the operator.
+                properties:
+                  name:
+                    description: name is unique within a namespace to reference a
+                      secret resource.
+                    type: string
+                  namespace:
+                    description: namespace defines the space within which the secret
+                      name must be unique.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

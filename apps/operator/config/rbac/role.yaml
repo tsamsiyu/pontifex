@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pontifex-operator
+rules:
+- apiGroups: [pontifex.io]
+  resources: [networkoverlays]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [pontifex.io]
+  resources: [networkoverlays/status, networkoverlays/finalizers]
+  verbs: [get, update, patch]
+- apiGroups: [""]
+  resources: [secrets, serviceaccounts, configmaps, events]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [""]
+  resources: [nodes, pods]
+  verbs: [get, list, watch]
+- apiGroups: [apps]
+  resources: [deployments]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [rbac.authorization.k8s.io]
+  resources: [clusterroles, clusterrolebindings]
+  verbs: [get, list, watch, create, update, patch, delete]

@@ -1,0 +1,109 @@
+version: '3'
+
+# Top-level Taskfile for the pontifex monorepo. Each module is built/tested
+# from its own working directory.
+
+vars:
+  ROOT:
+    sh: pwd
+  BIN_DIR: '{{.ROOT}}/bin'
+  CONTROLLER_GEN: '{{.ROOT}}/bin/controller-gen'
+  CONTROLLER_GEN_VERSION: v0.16.5
+  GOLANGCI_LINT: '{{.ROOT}}/bin/golangci-lint'
+  GOLANGCI_LINT_VERSION: v1.61.0
+
+  AGENT_IMAGE: '{{.AGENT_IMAGE | default "ghcr.io/tsamsiyu/pontifex-agent:dev"}}'
+  OPERATOR_IMAGE: '{{.OPERATOR_IMAGE | default "ghcr.io/tsamsiyu/pontifex-operator:dev"}}'
+
+  CRD_OUT_DIR: '{{.ROOT}}/apps/operator/config/crd/bases'
+  HEADER_FILE: '{{.ROOT}}/hack/boilerplate.go.txt'
+
+  MODULES:
+  - api
+  - apps/agent
+  - apps/operator
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+    - task --list
+
+  tools:controller-gen:
+    desc: Install controller-gen into ./bin
+    cmds:
+    - mkdir -p {{.BIN_DIR}}
+    - GOBIN={{.BIN_DIR}} go install sigs.k8s.io/controller-tools/cmd/controller-gen@{{.CONTROLLER_GEN_VERSION}}
+    status:
+    - test -x {{.CONTROLLER_GEN}}
+
+  tools:golangci-lint:
+    desc: Install golangci-lint into ./bin
+    cmds:
+    - mkdir -p {{.BIN_DIR}}
+    - GOBIN={{.BIN_DIR}} go install github.com/golangci/golangci-lint/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
+    status:
+    - test -x {{.GOLANGCI_LINT}}
+
+  generate:
+    desc: Run controller-gen for deepcopy + CRD manifests
+    deps: [tools:controller-gen]
+    cmds:
+    - >-
+      cd api && {{.CONTROLLER_GEN}}
+      object:headerFile={{.HEADER_FILE}}
+      paths=./...
+    - >-
+      cd api && {{.CONTROLLER_GEN}}
+      crd
+      paths=./...
+      output:crd:artifacts:config={{.CRD_OUT_DIR}}
+
+  lint:
+    desc: golangci-lint across all modules
+    deps: [tools:golangci-lint]
+    cmds:
+    - for: { var: MODULES }
+      cmd: cd {{.ITEM}} && {{.GOLANGCI_LINT}} run ./...
+
+  test:
+    desc: go test across all modules
+    cmds:
+    - for: { var: MODULES }
+      cmd: cd {{.ITEM}} && go test ./...
+
+  build:agent:
+    desc: Build the agent binary
+    cmds:
+    - mkdir -p {{.BIN_DIR}}
+    - cd apps/agent && CGO_ENABLED=0 go build -o {{.BIN_DIR}}/agent ./cmd/agent
+
+  build:operator:
+    desc: Build the operator binary
+    cmds:
+    - mkdir -p {{.BIN_DIR}}
+    - cd apps/operator && CGO_ENABLED=0 go build -o {{.BIN_DIR}}/operator ./cmd/operator
+
+  build:
+    desc: Build both binaries
+    deps: [build:agent, build:operator]
+
+  docker:agent:
+    desc: Build the agent container image
+    cmds:
+    - docker build -t {{.AGENT_IMAGE}} -f apps/agent/Dockerfile .
+
+  docker:operator:
+    desc: Build the operator container image
+    cmds:
+    - docker build -t {{.OPERATOR_IMAGE}} -f apps/operator/Dockerfile .
+
+  install:
+    desc: Apply the operator's kustomize bundle to the current kube-context
+    cmds:
+    - kubectl apply -k apps/operator/config/default
+
+  uninstall:
+    desc: Remove the operator's kustomize bundle from the current kube-context
+    cmds:
+    - kubectl delete -k apps/operator/config/default
