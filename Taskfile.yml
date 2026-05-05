@@ -1,8 +1,5 @@
 version: '3'
 
-# Top-level Taskfile for the pontifex monorepo. Each module is built/tested
-# from its own working directory.
-
 vars:
   ROOT:
     sh: pwd
@@ -14,9 +11,11 @@ vars:
 
   AGENT_IMAGE: '{{.AGENT_IMAGE | default "ghcr.io/tsamsiyu/pontifex-agent:dev"}}'
   OPERATOR_IMAGE: '{{.OPERATOR_IMAGE | default "ghcr.io/tsamsiyu/pontifex-operator:dev"}}'
+  PLATFORM: '{{.PLATFORM | default "linux/amd64"}}'
 
-  CRD_OUT_DIR: '{{.ROOT}}/apps/operator/config/crd/bases'
   HEADER_FILE: '{{.ROOT}}/hack/boilerplate.go.txt'
+  CRD_OUT_DIR: '{{.ROOT}}/helm/operator/crds'
+  RBAC_OUT_DIR: '{{.ROOT}}/helm/operator/rbac'
 
   MODULES:
   - api
@@ -29,8 +28,10 @@ tasks:
     cmds:
     - task --list
 
+  # ── internal tool installers ────────────────────────────────────────────────
+
   tools:controller-gen:
-    desc: Install controller-gen into ./bin
+    internal: true
     cmds:
     - mkdir -p {{.BIN_DIR}}
     - GOBIN={{.BIN_DIR}} go install sigs.k8s.io/controller-tools/cmd/controller-gen@{{.CONTROLLER_GEN_VERSION}}
@@ -38,72 +39,75 @@ tasks:
     - test -x {{.CONTROLLER_GEN}}
 
   tools:golangci-lint:
-    desc: Install golangci-lint into ./bin
+    internal: true
     cmds:
     - mkdir -p {{.BIN_DIR}}
     - GOBIN={{.BIN_DIR}} go install github.com/golangci/golangci-lint/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
     status:
     - test -x {{.GOLANGCI_LINT}}
 
-  generate:
-    desc: Run controller-gen for deepcopy + CRD manifests
+  # ── code generation ─────────────────────────────────────────────────────────
+
+  gen:deepcopy:all:
+    desc: Generate DeepCopy methods for api/v1alpha1 types
     deps: [tools:controller-gen]
     cmds:
     - >-
       cd api && {{.CONTROLLER_GEN}}
       object:headerFile={{.HEADER_FILE}}
       paths=./...
+
+  gen:crds:all:
+    desc: Generate CRD manifests into helm/operator/crds/
+    deps: [tools:controller-gen]
+    cmds:
+    - mkdir -p {{.CRD_OUT_DIR}}
     - >-
       cd api && {{.CONTROLLER_GEN}}
       crd
       paths=./...
       output:crd:artifacts:config={{.CRD_OUT_DIR}}
 
-  lint:
+  gen:rbac:all:
+    desc: Generate RBAC manifests for the operator into helm/operator/rbac/
+    deps: [tools:controller-gen]
+    cmds:
+    - mkdir -p {{.RBAC_OUT_DIR}}
+    - >-
+      cd apps/operator && {{.CONTROLLER_GEN}}
+      rbac:roleName=operator-role
+      paths=./...
+      output:rbac:artifacts:config={{.RBAC_OUT_DIR}}
+
+  # ── testing ─────────────────────────────────────────────────────────────────
+
+  test:operator:
+    desc: go test ./... in apps/operator
+    cmds:
+    - cd apps/operator && go test ./...
+
+  test:agent:
+    desc: go test ./... in apps/agent
+    cmds:
+    - cd apps/agent && go test ./...
+
+  # ── linting ─────────────────────────────────────────────────────────────────
+
+  lint:all:
     desc: golangci-lint across all modules
     deps: [tools:golangci-lint]
     cmds:
     - for: { var: MODULES }
       cmd: cd {{.ITEM}} && {{.GOLANGCI_LINT}} run ./...
 
-  test:
-    desc: go test across all modules
-    cmds:
-    - for: { var: MODULES }
-      cmd: cd {{.ITEM}} && go test ./...
+  # ── docker ──────────────────────────────────────────────────────────────────
 
-  build:agent:
-    desc: Build the agent binary
+  docker:operator:build:
+    desc: Build operator image (OPERATOR_IMAGE=… PLATFORM=… to override)
     cmds:
-    - mkdir -p {{.BIN_DIR}}
-    - cd apps/agent && CGO_ENABLED=0 go build -o {{.BIN_DIR}}/agent ./cmd/agent
+    - docker build --platform {{.PLATFORM}} -t {{.OPERATOR_IMAGE}} -f apps/operator/Dockerfile .
 
-  build:operator:
-    desc: Build the operator binary
+  docker:agent:build:
+    desc: Build agent image (AGENT_IMAGE=… PLATFORM=… to override)
     cmds:
-    - mkdir -p {{.BIN_DIR}}
-    - cd apps/operator && CGO_ENABLED=0 go build -o {{.BIN_DIR}}/operator ./cmd/operator
-
-  build:
-    desc: Build both binaries
-    deps: [build:agent, build:operator]
-
-  docker:agent:
-    desc: Build the agent container image
-    cmds:
-    - docker build -t {{.AGENT_IMAGE}} -f apps/agent/Dockerfile .
-
-  docker:operator:
-    desc: Build the operator container image
-    cmds:
-    - docker build -t {{.OPERATOR_IMAGE}} -f apps/operator/Dockerfile .
-
-  install:
-    desc: Apply the operator's kustomize bundle to the current kube-context
-    cmds:
-    - kubectl apply -k apps/operator/config/default
-
-  uninstall:
-    desc: Remove the operator's kustomize bundle from the current kube-context
-    cmds:
-    - kubectl delete -k apps/operator/config/default
+    - docker build --platform {{.PLATFORM}} -t {{.AGENT_IMAGE}} -f apps/agent/Dockerfile .

@@ -6,27 +6,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pontifex is cross-cluster overlay networking for Kubernetes via WireGuard + GoBGP. A `NetworkOverlay` CRD (cluster-scoped, `pontifex.io/v1alpha1`) declares external **peers** (other clusters) and internal **edges** (local pods reachable from peers via stable virtual IPs). Two control planes ship in this monorepo: the **operator** (reconciles CRs, provisions cluster workloads) and the **agent** (runs on gateway and internal nodes; handles WG/BGP/routes/firewall).
 
-**Status:** Phase 1 scaffolding only. Most reconciler bodies, BGP/WG/route plumbing, and resolver logic are intentionally stubbed and return `errors.New("not implemented")` or zero values. The full multi-phase roadmap, design rationale, and type-set notes live in `.claude/plans/init.md` — read it before making non-trivial changes; many decisions there are user-confirmed and not re-derivable from the code.
+**Status:** Phase 2 operator logic is implemented. WG key generation (`wgkeys/`) and agent RBAC (`agent/rbac.go`) are stubbed. BGP/WG/route plumbing in the agent is stubbed. The full multi-phase roadmap, design rationale, and type-set notes live in `.claude/plans/init.md` — read it before making non-trivial changes; many decisions there are user-confirmed and not re-derivable from the code.
 
 ## Commands
 
 Tooling is wired through `Taskfile.yml` (use `task`, not raw `go`/`docker`/`kubectl`). `controller-gen` and `golangci-lint` are auto-installed into `./bin/` on first use.
 
 ```sh
-task generate         # controller-gen: deepcopy + CRD manifests into apps/operator/config/crd/bases
-task lint             # golangci-lint run ./... in each module
-task test             # go test ./... in each module
-task build:agent      # → bin/agent
-task build:operator   # → bin/operator
-task docker:agent     # AGENT_IMAGE=... task docker:agent to override tag
-task docker:operator
-task install          # kubectl apply -k apps/operator/config/default
-task uninstall
+task gen:deepcopy:all          # controller-gen: regenerate zz_generated.deepcopy.go
+task gen:crds:all              # controller-gen: CRD manifests → helm/operator/crds/
+task gen:rbac:all              # controller-gen: RBAC manifests → helm/operator/rbac/
+task test:operator             # go test ./... in apps/operator
+task test:agent                # go test ./... in apps/agent
+task lint:all                  # golangci-lint run ./... in each module
+task docker:operator:build     # build operator image (OPERATOR_IMAGE=… PLATFORM=… to override)
+task docker:agent:build        # build agent image  (AGENT_IMAGE=…  PLATFORM=… to override)
 ```
 
-Run a single test in one module: `cd apps/agent && go test ./internal/cluster -run TestMediator`. The Taskfile loops over modules with per-module `cd`, so test/lint commands won't pick up a top-level `go test ./...`.
+Run a single test in one module: `cd apps/agent && go test ./internal/cluster -run TestMediator`. The Taskfile runs per-module `cd`, so `task test:*` won't pick up a top-level `go test ./...`.
 
-After editing types in `api/v1alpha1/`, always run `task generate` — `zz_generated.deepcopy.go` and the CRD YAML in `apps/operator/config/crd/bases/` are checked-in artifacts, not gitignored.
+After editing types in `api/v1alpha1/`, always run `task gen:deepcopy:all` and `task gen:crds:all` — `zz_generated.deepcopy.go` and the CRD YAML in `helm/operator/crds/` are checked-in artifacts, not gitignored.
 
 ## Architecture
 
@@ -38,14 +37,13 @@ This is a **multi-module Go workspace** (`go.work`) with three modules under mod
 
 ### Operator pipeline
 
-`cmd/operator/main.go` runs as a single-replica Deployment (`LeaderElection: false` — reintroduce before scaling). Five concerns, each in its own package under `internal/`:
+`cmd/operator/main.go` runs as a single-replica Deployment (`LeaderElection: false` — reintroduce before scaling). A single reconciler handles all concerns:
 
-- `controller/networkoverlay_controller.go` — top-level reconciler. Per CR: allocate community, generate WG keypair (Secret in operator namespace), ensure cluster infra (RBAC, gateway Deployments, per-node internal Deployments), resolve edges. Adds finalizer `pontifex.io/networkoverlay` for per-overlay cleanup.
-- `community/` — allocates `<clusterASN>:<n>` BGP communities into `status.community` (cluster ASN comes from `OperatorConfig`, not the CR).
-- `wgkeys/` — generates per-overlay WG keypairs; private key lives in `Secret/pontifex-wg-<overlay>` mounted into gateway pods, public key published to `status.publicKey`.
-- `gateways/` — separate two-stage pipeline (`observer.go` → `overlay_updater.go`) that watches Nodes by gateway label and patches `status.gateways` on every NetworkOverlay. Runs alongside the controller; both write to different status paths.
-- `resolver/` — watches Pods+Nodes, parses `spec.edges[].podLabelsSelector` via `labels.Parse`, populates `status.edges`. Skips edges resolving to gateway-labeled nodes (gateway/internal modes can't share a node).
-- `deploy/` — workload templates: `rbac.go` (agent SA: `get/list/watch` on NetworkOverlay only), `gateway_deploy.go` (two single-replica Deployments — primary, secondary; **not** DaemonSets), `internal_deploy.go` (per-node Deployment lifecycle keyed off `union(status.edges[].nodeName) \ gatewayLabeledNodes`).
+- `controller/networkoverlay_controller.go` — the only reconciler. Per CR: populate `status.gateways` from gateway-labeled nodes, allocate BGP community, generate WG keypair (Secret in operator namespace), ensure cluster infra (RBAC, gateway Deployments, per-node internal Deployments), resolve `spec.edges` into `status.edges`. Adds finalizer `pontifex.io/networkoverlay` for per-overlay cleanup. Watches Pods and Nodes to re-trigger edge resolution on change.
+- `agent/` — agent workload lifecycle: `gateway.go` (two single-replica Deployments — primary, secondary; **not** DaemonSets), `internal.go` (per-node Deployment lifecycle keyed off `union(status.edges[].nodeName) \ gatewayLabeledNodes`), `rbac.go` (agent SA: `get/list/watch` on NetworkOverlay only — stub).
+- `wgkeys/` — generates per-overlay WG keypairs; private key lives in `Secret/pontifex-wg-<overlay>` mounted into gateway pods, public key published to `status.publicKey` (stub).
+
+Community allocation and edge resolution are inlined into the controller (no separate packages).
 
 ### Agent pipeline
 
