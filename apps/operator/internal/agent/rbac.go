@@ -1,4 +1,4 @@
-package deploy
+package agent
 
 import (
 	"context"
