@@ -22,15 +22,21 @@ import (
 	"github.com/tsamsiyu/pontifex/apps/operator/internal/wgkeys"
 )
 
+// rbacEnsurer is the function signature for ensuring agent RBAC, injectable
+// so tests can substitute a no-op without modifying the agent package.
+type rbacEnsurer func(ctx context.Context, c client.Client, namespace string) error
+
 const finalizerName = "pontifex.io/networkoverlay"
 
 // NetworkOverlayReconciler reconciles NetworkOverlay CRs into community
 // allocation, per-overlay WG Secret, RBAC, gateway Deployments,
 // per-internal-node Deployments, and resolved status.edges.
 type NetworkOverlayReconciler struct {
-	Client client.Client
-	Scheme *runtime.Scheme
-	Config opconfig.OperatorConfig
+	Client     client.Client
+	Scheme     *runtime.Scheme
+	Config     opconfig.OperatorConfig
+	Keys       wgkeys.KeyPairEnsurer
+	EnsureRBAC rbacEnsurer
 }
 
 // +kubebuilder:rbac:groups=pontifex.io,resources=networkoverlays,verbs=get;list;watch;create;update;patch;delete
@@ -89,8 +95,7 @@ func (r *NetworkOverlayReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		logger.Info("allocated community", "community", comm)
 	}
 
-	gen := &wgkeys.Generator{Client: r.Client, Namespace: r.Config.Namespace}
-	pubKey, secretName, err := gen.EnsureKeyPair(ctx, &overlay)
+	pubKey, secretName, err := r.Keys.EnsureKeyPair(ctx, &overlay)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure WG keypair: %w", err)
 	}
@@ -103,7 +108,7 @@ func (r *NetworkOverlayReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 	}
 
-	if err := agent.EnsureAgentRBAC(ctx, r.Client, r.Config.Namespace); err != nil {
+	if err := r.EnsureRBAC(ctx, r.Client, r.Config.Namespace); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure agent RBAC: %w", err)
 	}
 

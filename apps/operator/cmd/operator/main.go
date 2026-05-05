@@ -17,8 +17,10 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	v1alpha1 "github.com/tsamsiyu/pontifex/api/v1alpha1"
+	"github.com/tsamsiyu/pontifex/apps/operator/internal/agent"
 	opconfig "github.com/tsamsiyu/pontifex/apps/operator/internal/config"
 	"github.com/tsamsiyu/pontifex/apps/operator/internal/controller"
+	"github.com/tsamsiyu/pontifex/apps/operator/internal/wgkeys"
 )
 
 func main() {
@@ -64,9 +66,11 @@ func run() error {
 	}
 
 	if err := (&controller.NetworkOverlayReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Config: cfg,
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Config:     cfg,
+		Keys:       &wgkeys.Generator{Client: mgr.GetClient(), Namespace: cfg.Namespace},
+		EnsureRBAC: agent.EnsureAgentRBAC,
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setup NetworkOverlay controller: %w", err)
 	}

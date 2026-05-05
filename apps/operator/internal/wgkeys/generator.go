@@ -11,6 +11,12 @@ import (
 
 var errNotImplemented = errors.New("not implemented")
 
+// KeyPairEnsurer is the interface the reconciler uses to obtain a per-overlay
+// WireGuard keypair. *Generator satisfies it; tests may substitute a no-op.
+type KeyPairEnsurer interface {
+	EnsureKeyPair(ctx context.Context, overlay *v1alpha1.NetworkOverlay) (publicKey, secretName string, err error)
+}
+
 // Generator creates the per-overlay WireGuard keypair on first reconcile,
 // stores the private key in a namespaced Secret (one Secret per overlay), and
 // returns the public key for status.publicKey.
