@@ -19,23 +19,31 @@ import (
 // BGP-learned routes, and the iptables/nftables bridge that DNATs virtual IPs
 // to local pod IPs.
 type InternalReconciler struct {
-	logger    *zap.Logger
-	routes    routes.Routes
-	firewall  firewall.Firewall
-	bgpEvents <-chan bgp.RouteEvent
-	nodeName  string
-	learned   map[string]bgp.Route // key = prefix
+	logger   *zap.Logger
+	routes   routes.Routes
+	firewall firewall.Firewall
+	nodeName string
+	learned  map[string]bgp.Route // key = prefix
 }
 
 // NewInternalReconciler returns an InternalReconciler.
-func NewInternalReconciler(rt routes.Routes, fw firewall.Firewall, bgpEvents <-chan bgp.RouteEvent, nodeName string, logger *zap.Logger) *InternalReconciler {
+func NewInternalReconciler(rt routes.Routes, fw firewall.Firewall, nodeName string, logger *zap.Logger) *InternalReconciler {
 	return &InternalReconciler{
-		logger:    logger,
-		routes:    rt,
-		firewall:  fw,
-		bgpEvents: bgpEvents,
-		nodeName:  nodeName,
-		learned:   make(map[string]bgp.Route),
+		logger:   logger,
+		routes:   rt,
+		firewall: fw,
+		nodeName: nodeName,
+		learned:  make(map[string]bgp.Route),
+	}
+}
+
+// ApplyEvent updates the internal learned-routes map from a BGP route event.
+// Called by RoutesUpdater before each Reconcile triggered by a BGP event.
+func (r *InternalReconciler) ApplyEvent(ev bgp.RouteEvent) {
+	if ev.Type == bgp.RouteWithdrawn {
+		delete(r.learned, ev.Route.Prefix)
+	} else {
+		r.learned[ev.Route.Prefix] = ev.Route
 	}
 }
 
@@ -62,8 +70,6 @@ func vrfTableID(community string) (uint32, error) {
 // Reconcile converges all host networking for internal-node overlays:
 // VRFs, ip rules, virtual-IP addresses, BGP-learned routes, and firewall bridges.
 func (r *InternalReconciler) Reconcile(ctx context.Context, overlays []v1alpha1.NetworkOverlay) error {
-	r.drainBGPEvents()
-
 	var errs []error
 
 	if err := r.reconcileVRFs(ctx, overlays, &errs); err != nil {
@@ -79,21 +85,6 @@ func (r *InternalReconciler) Reconcile(ctx context.Context, overlays []v1alpha1.
 	}
 
 	return errors.Join(errs...)
-}
-
-func (r *InternalReconciler) drainBGPEvents() {
-	for {
-		select {
-		case ev := <-r.bgpEvents:
-			if ev.Type == bgp.RouteWithdrawn {
-				delete(r.learned, ev.Route.Prefix)
-			} else {
-				r.learned[ev.Route.Prefix] = ev.Route
-			}
-		default:
-			return
-		}
-	}
 }
 
 // reconcileVRFs ensures the desired per-overlay VRF devices exist. Returns a

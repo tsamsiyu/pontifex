@@ -14,28 +14,33 @@ import (
 // GatewayReconciler installs peer-learned routes globally on the gateway host.
 // Gateways do not host pods so VRF-per-overlay is unnecessary.
 type GatewayReconciler struct {
-	logger    *zap.Logger
-	routes    routes.Routes
-	bgpEvents <-chan bgp.RouteEvent
-	learned   map[string]bgp.Route // key = prefix
+	logger  *zap.Logger
+	routes  routes.Routes
+	learned map[string]bgp.Route // key = prefix
 }
 
 // NewGatewayReconciler returns a GatewayReconciler.
-func NewGatewayReconciler(rt routes.Routes, bgpEvents <-chan bgp.RouteEvent, logger *zap.Logger) *GatewayReconciler {
+func NewGatewayReconciler(rt routes.Routes, logger *zap.Logger) *GatewayReconciler {
 	return &GatewayReconciler{
-		logger:    logger,
-		routes:    rt,
-		bgpEvents: bgpEvents,
-		learned:   make(map[string]bgp.Route),
+		logger:  logger,
+		routes:  rt,
+		learned: make(map[string]bgp.Route),
 	}
 }
 
-// Reconcile drains pending BGP route events, then syncs the global routing
-// table to contain exactly the learned routes whose community belongs to an
-// active overlay.
-func (r *GatewayReconciler) Reconcile(ctx context.Context, overlays []v1alpha1.NetworkOverlay) error {
-	r.drainBGPEvents()
+// ApplyEvent updates the internal learned-routes map from a BGP route event.
+// Called by RoutesUpdater before each Reconcile triggered by a BGP event.
+func (r *GatewayReconciler) ApplyEvent(ev bgp.RouteEvent) {
+	if ev.Type == bgp.RouteWithdrawn {
+		delete(r.learned, ev.Route.Prefix)
+	} else {
+		r.learned[ev.Route.Prefix] = ev.Route
+	}
+}
 
+// Reconcile syncs the global routing table to contain exactly the learned
+// routes whose community belongs to an active overlay.
+func (r *GatewayReconciler) Reconcile(ctx context.Context, overlays []v1alpha1.NetworkOverlay) error {
 	active := activeCommunities(overlays)
 	desired := r.buildDesiredRoutes(active)
 
@@ -43,22 +48,6 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, overlays []v1alpha1.N
 		return fmt.Errorf("sync global routes: %w", err)
 	}
 	return nil
-}
-
-// drainBGPEvents non-blockingly reads all pending events and updates learned.
-func (r *GatewayReconciler) drainBGPEvents() {
-	for {
-		select {
-		case ev := <-r.bgpEvents:
-			if ev.Type == bgp.RouteWithdrawn {
-				delete(r.learned, ev.Route.Prefix)
-			} else {
-				r.learned[ev.Route.Prefix] = ev.Route
-			}
-		default:
-			return
-		}
-	}
 }
 
 // buildDesiredRoutes returns all learned routes whose community intersects the

@@ -13,6 +13,7 @@ import (
 // deliberately thin: no business logic, no diffing, no error tracking.
 type Mediator interface {
 	Subscribe() <-chan []v1alpha1.NetworkOverlay
+	Run(ctx context.Context) error
 }
 
 // mediator is the concrete impl. Phase 1 stub: subscribers are tracked but

@@ -14,14 +14,14 @@ import (
 
 // GatewayReconciler runs a GoBGP server for the gateway role: route reflector
 // to internal-node iBGP peers, eBGP to external peers over WireGuard, with
-// per-overlay community import/export filters.
+// per-overlay community import/export filters. The BGP server must already be
+// started before the first Reconcile call.
 type GatewayReconciler struct {
 	logger      *zap.Logger
 	server      bgp.Server
 	asn         uint32
 	routerID    string
 	isSecondary bool
-	started     bool
 }
 
 // NewGatewayReconciler returns a GatewayReconciler.
@@ -41,16 +41,9 @@ func (r *GatewayReconciler) Subscribe() <-chan bgp.RouteEvent {
 }
 
 // Reconcile converges local BGP neighbors and policies to the overlay snapshot.
-// On first call it starts the BGP server. Each cycle it lists actual state,
-// removes orphans, and adds missing neighbors/policies.
+// Each cycle it lists actual state, removes orphans, and adds missing
+// neighbors/policies.
 func (r *GatewayReconciler) Reconcile(ctx context.Context, overlays []v1alpha1.NetworkOverlay) error {
-	if !r.started {
-		if err := r.server.Start(ctx, r.asn, r.routerID); err != nil {
-			return fmt.Errorf("start bgp server: %w", err)
-		}
-		r.started = true
-	}
-
 	desiredNeighbors := r.buildDesiredNeighbors(overlays)
 	desiredPolicies := r.buildDesiredPolicies(overlays)
 

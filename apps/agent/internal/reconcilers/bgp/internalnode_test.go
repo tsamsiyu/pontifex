@@ -15,36 +15,6 @@ func newInternalReconciler(f *fakeServer, nodeName string) *InternalReconciler {
 	return NewInternalReconciler(f, 65000, "10.0.1.5", nodeName, zap.NewNop())
 }
 
-// ── server lifecycle ──────────────────────────────────────────────────────────
-
-func TestInternalReconcile_StartCalledOnce(t *testing.T) {
-	f := newFakeServer()
-	r := newInternalReconciler(f, "node1")
-	for i := 0; i < 3; i++ {
-		if err := r.Reconcile(context.Background(), nil); err != nil {
-			t.Fatalf("reconcile %d: %v", i, err)
-		}
-	}
-	if f.startCalls != 1 {
-		t.Errorf("startCalls=%d after 3 reconciles, want 1", f.startCalls)
-	}
-}
-
-func TestInternalReconcile_StartError(t *testing.T) {
-	startErr := errors.New("daemon not running")
-	f := newFakeServer()
-	f.startErr = startErr
-	r := newInternalReconciler(f, "node1")
-
-	err := r.Reconcile(context.Background(), nil)
-	if !errors.Is(err, startErr) {
-		t.Errorf("err=%v, want to wrap %v", err, startErr)
-	}
-	if len(f.addNeighborCalls) != 0 || len(f.addPolicyCalls) != 0 || len(f.advertiseCalls) != 0 {
-		t.Errorf("unexpected calls after start error")
-	}
-}
-
 // ── no overlays ───────────────────────────────────────────────────────────────
 
 func TestInternalReconcile_NoOverlays(t *testing.T) {

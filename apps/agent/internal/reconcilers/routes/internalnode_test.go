@@ -5,17 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"go.uber.org/zap"
-
 	v1alpha1 "github.com/tsamsiyu/pontifex/api/v1alpha1"
-	"github.com/tsamsiyu/pontifex/apps/agent/internal/libs/bgp"
 	"github.com/tsamsiyu/pontifex/apps/agent/internal/libs/firewall"
 	"github.com/tsamsiyu/pontifex/apps/agent/internal/libs/routes"
 )
-
-func newInternalReconciler(rt *fakeRoutes, fw *fakeFirewall, events <-chan bgp.RouteEvent, nodeName string) *InternalReconciler {
-	return NewInternalReconciler(rt, fw, events, nodeName, zap.NewNop())
-}
 
 // ── vrfTableID helper ─────────────────────────────────────────────────────────
 
@@ -48,7 +41,7 @@ func TestVRFTableID_InvalidNumber(t *testing.T) {
 func TestInternal_NoOverlays(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	if err := r.Reconcile(context.Background(), nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -64,7 +57,7 @@ func TestInternal_NoOverlays(t *testing.T) {
 func TestInternal_VRFEnsuredForOverlayWithCommunity(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("myov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -83,7 +76,7 @@ func TestInternal_VRFEnsuredForOverlayWithCommunity(t *testing.T) {
 func TestInternal_VRFNotEnsuredForNoCommunity(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -97,7 +90,7 @@ func TestInternal_VRFNotEnsuredForNoCommunity(t *testing.T) {
 func TestInternal_VRFNameDerivedCorrectly(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("myov", "65000:2", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -112,7 +105,7 @@ func TestInternal_OrphanVRFRemoved(t *testing.T) {
 	rt := newFakeRoutes()
 	rt.vrfs = []routes.VRF{{Name: "pntfx-stale", TableID: 10099}}
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	if err := r.Reconcile(context.Background(), nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -126,7 +119,7 @@ func TestInternal_DesiredVRFNotRemoved(t *testing.T) {
 	rt := newFakeRoutes()
 	rt.vrfs = []routes.VRF{{Name: "pntfx-ov", TableID: 10001}}
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -142,7 +135,7 @@ func TestInternal_ListVRFsError(t *testing.T) {
 	rt := newFakeRoutes()
 	rt.listVRFsErr = listErr
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	err := r.Reconcile(context.Background(), nil)
 	if !errors.Is(err, listErr) {
@@ -155,7 +148,7 @@ func TestInternal_ListVRFsError(t *testing.T) {
 func TestInternal_RuleEnsuredForOverlayWithVirtualCIDR(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "192.168.0.0/24", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -174,9 +167,9 @@ func TestInternal_RuleEnsuredForOverlayWithVirtualCIDR(t *testing.T) {
 func TestInternal_RuleNotEnsuredForEmptyVirtualCIDR(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
-	ov := mkOverlay("ov", "65000:1", "", nil, nil) // empty VirtualCIDR
+	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,7 +182,7 @@ func TestInternal_OrphanRuleRemoved(t *testing.T) {
 	rt := newFakeRoutes()
 	rt.rules = []routes.Rule{{To: "10.99.0.0/16", TableID: 10099}}
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	if err := r.Reconcile(context.Background(), nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -204,7 +197,7 @@ func TestInternal_ListRulesError(t *testing.T) {
 	rt := newFakeRoutes()
 	rt.listRulesErr = listErr
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	err := r.Reconcile(context.Background(), nil)
 	if !errors.Is(err, listErr) {
@@ -217,7 +210,7 @@ func TestInternal_ListRulesError(t *testing.T) {
 func TestInternal_AddrEnsuredForReadyEdgeOnThisNode(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil,
 		[]v1alpha1.EdgeStatus{{NodeName: "node1", VirtualIP: "192.168.1.10", PodIP: "10.0.0.5", Ready: true}},
@@ -234,7 +227,7 @@ func TestInternal_AddrEnsuredForReadyEdgeOnThisNode(t *testing.T) {
 func TestInternal_AddrNotEnsuredForOtherNode(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil,
 		[]v1alpha1.EdgeStatus{{NodeName: "node2", VirtualIP: "192.168.1.10", Ready: true}},
@@ -250,7 +243,7 @@ func TestInternal_AddrNotEnsuredForOtherNode(t *testing.T) {
 func TestInternal_AddrNotEnsuredForNotReadyEdge(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil,
 		[]v1alpha1.EdgeStatus{{NodeName: "node1", VirtualIP: "192.168.1.10", Ready: false}},
@@ -266,7 +259,7 @@ func TestInternal_AddrNotEnsuredForNotReadyEdge(t *testing.T) {
 func TestInternal_AddrNotEnsuredForEmptyVIP(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil,
 		[]v1alpha1.EdgeStatus{{NodeName: "node1", VirtualIP: "", Ready: true}},
@@ -283,7 +276,7 @@ func TestInternal_OrphanAddrRemoved(t *testing.T) {
 	rt := newFakeRoutes()
 	rt.addrs["pntfx-ov"] = []routes.Addr{{VRFName: "pntfx-ov", IP: "192.168.1.99"}}
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -299,8 +292,8 @@ func TestInternal_OrphanAddrRemoved(t *testing.T) {
 func TestInternal_BGPRouteSyncedToCorrectTable(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	ch := mkBGPEvents(addedRoute("10.10.0.0/24", "172.16.0.1", "65000:1"))
-	r := newInternalReconciler(rt, fw, ch, "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
+	r.ApplyEvent(addedEvent("10.10.0.0/24", "172.16.0.1", "65000:1"))
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -319,11 +312,9 @@ func TestInternal_BGPRouteSyncedToCorrectTable(t *testing.T) {
 func TestInternal_BGPRouteWithdrawnNotInSync(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	ch := mkBGPEvents(
-		addedRoute("10.10.0.0/24", "172.16.0.1", "65000:1"),
-		withdrawnRoute("10.10.0.0/24"),
-	)
-	r := newInternalReconciler(rt, fw, ch, "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
+	r.ApplyEvent(addedEvent("10.10.0.0/24", "172.16.0.1", "65000:1"))
+	r.ApplyEvent(withdrawnEvent("10.10.0.0/24"))
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -339,9 +330,8 @@ func TestInternal_BGPRouteWithdrawnNotInSync(t *testing.T) {
 func TestInternal_BGPRouteWithUnknownCommunityIgnored(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	// Route carries community 65000:99 but overlay only has 65000:1.
-	ch := mkBGPEvents(addedRoute("10.10.0.0/24", "172.16.0.1", "65000:99"))
-	r := newInternalReconciler(rt, fw, ch, "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
+	r.ApplyEvent(addedEvent("10.10.0.0/24", "172.16.0.1", "65000:99"))
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -359,7 +349,7 @@ func TestInternal_SyncRoutesError(t *testing.T) {
 	rt := newFakeRoutes()
 	rt.syncRoutesErr = syncErr
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov})
@@ -373,7 +363,7 @@ func TestInternal_SyncRoutesError(t *testing.T) {
 func TestInternal_BridgeEnsuredForReadyEdgeWithPodIP(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil,
 		[]v1alpha1.EdgeStatus{{
@@ -399,7 +389,7 @@ func TestInternal_BridgeEnsuredForReadyEdgeWithPodIP(t *testing.T) {
 func TestInternal_BridgeNotEnsuredForOtherNode(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil,
 		[]v1alpha1.EdgeStatus{{NodeName: "node2", VirtualIP: "192.168.1.10", PodIP: "10.0.0.5", Ready: true}},
@@ -415,7 +405,7 @@ func TestInternal_BridgeNotEnsuredForOtherNode(t *testing.T) {
 func TestInternal_BridgeNotEnsuredForNotReadyEdge(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil,
 		[]v1alpha1.EdgeStatus{{NodeName: "node1", VirtualIP: "192.168.1.10", PodIP: "10.0.0.5", Ready: false}},
@@ -431,7 +421,7 @@ func TestInternal_BridgeNotEnsuredForNotReadyEdge(t *testing.T) {
 func TestInternal_BridgeNotEnsuredForEmptyPodIP(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil,
 		[]v1alpha1.EdgeStatus{{NodeName: "node1", VirtualIP: "192.168.1.10", PodIP: "", Ready: true}},
@@ -448,7 +438,7 @@ func TestInternal_OrphanBridgeRemoved(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
 	fw.bridges = []firewall.Bridge{{OverlayName: "ov", VirtualIP: "192.168.1.99", PodIP: "10.0.0.99"}}
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	if err := r.Reconcile(context.Background(), nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -462,7 +452,7 @@ func TestInternal_DesiredBridgeNotRemoved(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
 	fw.bridges = []firewall.Bridge{{OverlayName: "ov", VirtualIP: "192.168.1.10", PodIP: "10.0.0.5"}}
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	ov := mkOverlay("ov", "65000:1", "", nil,
 		[]v1alpha1.EdgeStatus{{NodeName: "node1", VirtualIP: "192.168.1.10", PodIP: "10.0.0.5", Ready: true}},
@@ -480,7 +470,7 @@ func TestInternal_ListBridgesError(t *testing.T) {
 	rt := newFakeRoutes()
 	fw := newFakeFirewall()
 	fw.listErr = listErr
-	r := newInternalReconciler(rt, fw, mkBGPEvents(), "node1")
+	r := newInternalReconcilerForTest(rt, fw, "node1")
 
 	err := r.Reconcile(context.Background(), nil)
 	if !errors.Is(err, listErr) {

@@ -44,47 +44,6 @@ func TestPeerAddress_Invalid(t *testing.T) {
 	}
 }
 
-// ── server lifecycle ──────────────────────────────────────────────────────────
-
-func TestGatewayReconcile_StartCalledOnFirstReconcile(t *testing.T) {
-	f := newFakeServer()
-	r := newGatewayReconciler(f, false)
-	if err := r.Reconcile(context.Background(), nil); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if f.startCalls != 1 {
-		t.Errorf("startCalls=%d, want 1", f.startCalls)
-	}
-}
-
-func TestGatewayReconcile_StartNotCalledAgain(t *testing.T) {
-	f := newFakeServer()
-	r := newGatewayReconciler(f, false)
-	for i := 0; i < 3; i++ {
-		if err := r.Reconcile(context.Background(), nil); err != nil {
-			t.Fatalf("reconcile %d: %v", i, err)
-		}
-	}
-	if f.startCalls != 1 {
-		t.Errorf("startCalls=%d after 3 reconciles, want 1", f.startCalls)
-	}
-}
-
-func TestGatewayReconcile_StartError(t *testing.T) {
-	startErr := errors.New("daemon not running")
-	f := newFakeServer()
-	f.startErr = startErr
-	r := newGatewayReconciler(f, false)
-
-	err := r.Reconcile(context.Background(), nil)
-	if !errors.Is(err, startErr) {
-		t.Errorf("err=%v, want to wrap %v", err, startErr)
-	}
-	if len(f.addNeighborCalls) != 0 || len(f.addPolicyCalls) != 0 {
-		t.Errorf("unexpected calls after start error")
-	}
-}
-
 // ── no overlays ───────────────────────────────────────────────────────────────
 
 func TestGatewayReconcile_NoOverlays(t *testing.T) {

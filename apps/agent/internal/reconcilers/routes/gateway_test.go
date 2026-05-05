@@ -5,21 +5,14 @@ import (
 	"errors"
 	"testing"
 
-	"go.uber.org/zap"
-
 	v1alpha1 "github.com/tsamsiyu/pontifex/api/v1alpha1"
-	"github.com/tsamsiyu/pontifex/apps/agent/internal/libs/bgp"
 )
-
-func newGatewayReconciler(f *fakeRoutes, events <-chan bgp.RouteEvent) *GatewayReconciler {
-	return NewGatewayReconciler(f, events, zap.NewNop())
-}
 
 // ── no-op ─────────────────────────────────────────────────────────────────────
 
-func TestGateway_NoOverlaysNoEvents(t *testing.T) {
+func TestGateway_NoOverlaysNoLearnedRoutes(t *testing.T) {
 	f := newFakeRoutes()
-	r := newGatewayReconciler(f, mkBGPEvents())
+	r := newGatewayReconcilerForTest(f)
 
 	if err := r.Reconcile(context.Background(), nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -32,12 +25,12 @@ func TestGateway_NoOverlaysNoEvents(t *testing.T) {
 	}
 }
 
-// ── BGP event draining ────────────────────────────────────────────────────────
+// ── ApplyEvent ────────────────────────────────────────────────────────────────
 
-func TestGateway_RouteAddedEventIncludedInSync(t *testing.T) {
+func TestGateway_ApplyEvent_RouteAddedIncludedInSync(t *testing.T) {
 	f := newFakeRoutes()
-	ch := mkBGPEvents(addedRoute("10.1.0.0/24", "192.168.0.1", "65000:1"))
-	r := newGatewayReconciler(f, ch)
+	r := newGatewayReconcilerForTest(f)
+	r.ApplyEvent(addedEvent("10.1.0.0/24", "192.168.0.1", "65000:1"))
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -53,13 +46,11 @@ func TestGateway_RouteAddedEventIncludedInSync(t *testing.T) {
 	}
 }
 
-func TestGateway_RouteWithdrawnRemovedFromSync(t *testing.T) {
+func TestGateway_ApplyEvent_RouteWithdrawnRemovedFromSync(t *testing.T) {
 	f := newFakeRoutes()
-	ch := mkBGPEvents(
-		addedRoute("10.1.0.0/24", "192.168.0.1", "65000:1"),
-		withdrawnRoute("10.1.0.0/24"),
-	)
-	r := newGatewayReconciler(f, ch)
+	r := newGatewayReconcilerForTest(f)
+	r.ApplyEvent(addedEvent("10.1.0.0/24", "192.168.0.1", "65000:1"))
+	r.ApplyEvent(withdrawnEvent("10.1.0.0/24"))
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -72,14 +63,12 @@ func TestGateway_RouteWithdrawnRemovedFromSync(t *testing.T) {
 	}
 }
 
-func TestGateway_MultipleEventsAllDrained(t *testing.T) {
+func TestGateway_ApplyEvent_MultipleRoutesAccumulate(t *testing.T) {
 	f := newFakeRoutes()
-	ch := mkBGPEvents(
-		addedRoute("10.1.0.0/24", "1.1.1.1", "65000:1"),
-		addedRoute("10.2.0.0/24", "1.1.1.1", "65000:1"),
-		addedRoute("10.3.0.0/24", "1.1.1.1", "65000:1"),
-	)
-	r := newGatewayReconciler(f, ch)
+	r := newGatewayReconcilerForTest(f)
+	r.ApplyEvent(addedEvent("10.1.0.0/24", "1.1.1.1", "65000:1"))
+	r.ApplyEvent(addedEvent("10.2.0.0/24", "1.1.1.1", "65000:1"))
+	r.ApplyEvent(addedEvent("10.3.0.0/24", "1.1.1.1", "65000:1"))
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -96,16 +85,16 @@ func TestGateway_MultipleEventsAllDrained(t *testing.T) {
 
 func TestGateway_LearnedRouteFilteredWhenOverlayRemoved(t *testing.T) {
 	f := newFakeRoutes()
-	ch := mkBGPEvents(addedRoute("10.1.0.0/24", "1.1.1.1", "65000:1"))
-	r := newGatewayReconciler(f, ch)
+	r := newGatewayReconcilerForTest(f)
+	r.ApplyEvent(addedEvent("10.1.0.0/24", "1.1.1.1", "65000:1"))
 
-	// First reconcile with overlay present — drains event into learned.
+	// First reconcile with overlay present.
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 
-	// Second reconcile: overlay is gone — route must be filtered out.
+	// Second reconcile: overlay gone — route filtered out.
 	f.syncRoutesCalls = nil
 	if err := r.Reconcile(context.Background(), nil); err != nil {
 		t.Fatalf("second reconcile: %v", err)
@@ -119,9 +108,8 @@ func TestGateway_LearnedRouteFilteredWhenOverlayRemoved(t *testing.T) {
 
 func TestGateway_RouteWithNoCommunityNotIncluded(t *testing.T) {
 	f := newFakeRoutes()
-	// Route has no community — should never match any overlay.
-	ch := mkBGPEvents(addedRoute("10.1.0.0/24", "1.1.1.1"))
-	r := newGatewayReconciler(f, ch)
+	r := newGatewayReconcilerForTest(f)
+	r.ApplyEvent(addedEvent("10.1.0.0/24", "1.1.1.1")) // no community
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -136,8 +124,8 @@ func TestGateway_RouteWithNoCommunityNotIncluded(t *testing.T) {
 
 func TestGateway_OverlayWithEmptyCommunityDoesNotMatchRoutes(t *testing.T) {
 	f := newFakeRoutes()
-	ch := mkBGPEvents(addedRoute("10.1.0.0/24", "1.1.1.1", "65000:1"))
-	r := newGatewayReconciler(f, ch)
+	r := newGatewayReconcilerForTest(f)
+	r.ApplyEvent(addedEvent("10.1.0.0/24", "1.1.1.1", "65000:1"))
 
 	ov := mkOverlay("ov", "", "", nil, nil)
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
@@ -154,17 +142,16 @@ func TestGateway_OverlayWithEmptyCommunityDoesNotMatchRoutes(t *testing.T) {
 
 func TestGateway_LearnedStateRetainedBetweenCalls(t *testing.T) {
 	f := newFakeRoutes()
-	ch := mkBGPEvents(addedRoute("10.1.0.0/24", "1.1.1.1", "65000:1"))
-	r := newGatewayReconciler(f, ch)
+	r := newGatewayReconcilerForTest(f)
+	r.ApplyEvent(addedEvent("10.1.0.0/24", "1.1.1.1", "65000:1"))
 
 	ov := mkOverlay("ov", "65000:1", "", nil, nil)
 
-	// First call drains the event.
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
 
-	// Second call: no new events; learned map still has the route.
+	// Second call with no new events — learned map still has the route.
 	f.syncRoutesCalls = nil
 	if err := r.Reconcile(context.Background(), []v1alpha1.NetworkOverlay{ov}); err != nil {
 		t.Fatalf("second reconcile: %v", err)
@@ -172,7 +159,7 @@ func TestGateway_LearnedStateRetainedBetweenCalls(t *testing.T) {
 
 	sc, _ := hasSyncCall(f.syncRoutesCalls, 0)
 	if !syncDesiredContains(sc.desired, "10.1.0.0/24") {
-		t.Error("learned route must persist across reconcile calls without new events")
+		t.Error("learned route must persist across reconcile calls")
 	}
 }
 
@@ -182,7 +169,7 @@ func TestGateway_SyncRoutesError(t *testing.T) {
 	syncErr := errors.New("netlink write failed")
 	f := newFakeRoutes()
 	f.syncRoutesErr = syncErr
-	r := newGatewayReconciler(f, mkBGPEvents())
+	r := newGatewayReconcilerForTest(f)
 
 	err := r.Reconcile(context.Background(), nil)
 	if !errors.Is(err, syncErr) {

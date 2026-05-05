@@ -16,6 +16,8 @@ type GatewayConfig struct {
 	WGListenPort int    `yaml:"wgListenPort"`
 	WGKeyDir     string `yaml:"wgKeyDir"`
 	LogLevel     string `yaml:"logLevel"`
+	ASN          uint32 `yaml:"asn"`      // cluster BGP ASN (env: PONTIFEX_ASN)
+	RouterID     string `yaml:"routerID"` // BGP router-ID, typically NodeIP
 }
 
 // InternalNodeConfig is the per-internal-agent-pod configuration. Gateway BGP
@@ -25,6 +27,8 @@ type InternalNodeConfig struct {
 	NodeName string `yaml:"nodeName"`
 	Firewall string `yaml:"firewall"` // "auto" | "iptables" | "nftables"
 	LogLevel string `yaml:"logLevel"`
+	ASN      uint32 `yaml:"asn"`      // cluster BGP ASN (env: PONTIFEX_ASN)
+	RouterID string `yaml:"routerID"` // BGP router-ID, typically NodeIP
 }
 
 // LoadGateway loads a GatewayConfig from the given YAML path with env

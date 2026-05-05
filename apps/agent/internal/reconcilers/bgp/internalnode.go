@@ -14,13 +14,13 @@ import (
 // InternalReconciler runs a GoBGP server for the internal-node role: iBGP to
 // every entry in status.gateways, advertising local edge VirtualIPs with the
 // overlay community and importing peer-learned routes into per-overlay VRFs.
+// The BGP server must already be started before the first Reconcile call.
 type InternalReconciler struct {
 	logger   *zap.Logger
 	server   bgp.Server
 	asn      uint32
 	routerID string
 	nodeName string
-	started  bool
 }
 
 // NewInternalReconciler returns an InternalReconciler.
@@ -40,16 +40,8 @@ func (r *InternalReconciler) Subscribe() <-chan bgp.RouteEvent {
 }
 
 // Reconcile converges local BGP neighbors, policies, and advertisements to
-// the overlay snapshot for this internal node. On first call it starts the
-// BGP server.
+// the overlay snapshot for this internal node.
 func (r *InternalReconciler) Reconcile(ctx context.Context, overlays []v1alpha1.NetworkOverlay) error {
-	if !r.started {
-		if err := r.server.Start(ctx, r.asn, r.routerID); err != nil {
-			return fmt.Errorf("start bgp server: %w", err)
-		}
-		r.started = true
-	}
-
 	desiredNeighbors := r.buildDesiredNeighbors(overlays)
 	desiredPolicies := r.buildDesiredPolicies(overlays)
 	desiredAds := r.buildDesiredAdvertisements(overlays)

@@ -14,6 +14,7 @@ import (
 	"github.com/tsamsiyu/pontifex/apps/agent/internal/config"
 	"github.com/tsamsiyu/pontifex/apps/agent/internal/controllers/gateway"
 	"github.com/tsamsiyu/pontifex/apps/agent/internal/controllers/internalnode"
+	bgplib "github.com/tsamsiyu/pontifex/apps/agent/internal/libs/bgp"
 )
 
 func main() {
@@ -42,7 +43,11 @@ func run() error {
 			return err
 		}
 		defer func() { _ = logger.Sync() }()
-		return gateway.NewManager(cfg, logger).Run(ctx)
+		bgpServer := bgplib.NewGoBGPServer()
+		if err := bgpServer.Start(ctx, cfg.ASN, cfg.RouterID); err != nil {
+			return fmt.Errorf("start bgp server: %w", err)
+		}
+		return gateway.NewManager(cfg, bgpServer, logger).Run(ctx)
 
 	case "internal":
 		cfg, err := config.LoadInternalNode(*configPath)
@@ -54,7 +59,11 @@ func run() error {
 			return err
 		}
 		defer func() { _ = logger.Sync() }()
-		return internalnode.NewManager(cfg, logger).Run(ctx)
+		bgpServer := bgplib.NewGoBGPServer()
+		if err := bgpServer.Start(ctx, cfg.ASN, cfg.RouterID); err != nil {
+			return fmt.Errorf("start bgp server: %w", err)
+		}
+		return internalnode.NewManager(cfg, bgpServer, logger).Run(ctx)
 
 	case "":
 		return fmt.Errorf("--mode is required (gateway | internal)")

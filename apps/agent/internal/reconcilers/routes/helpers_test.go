@@ -4,6 +4,7 @@ import (
 	"context"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"go.uber.org/zap"
 
 	v1alpha1 "github.com/tsamsiyu/pontifex/api/v1alpha1"
 	"github.com/tsamsiyu/pontifex/apps/agent/internal/libs/bgp"
@@ -150,18 +151,23 @@ func (f *fakeFirewall) ListBridges(_ context.Context) ([]firewall.Bridge, error)
 	return f.bridges, f.listErr
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// ── test constructors ─────────────────────────────────────────────────────────
 
-// mkBGPEvent returns a buffered channel pre-loaded with the given events.
-func mkBGPEvents(events ...bgp.RouteEvent) <-chan bgp.RouteEvent {
-	ch := make(chan bgp.RouteEvent, len(events))
-	for _, ev := range events {
-		ch <- ev
-	}
-	return ch
+func newGatewayReconcilerForTest(f *fakeRoutes) *GatewayReconciler {
+	return NewGatewayReconciler(f, nopLogger())
 }
 
-func addedRoute(prefix, nextHop string, communities ...string) bgp.RouteEvent {
+func newInternalReconcilerForTest(rt *fakeRoutes, fw *fakeFirewall, nodeName string) *InternalReconciler {
+	return NewInternalReconciler(rt, fw, nodeName, nopLogger())
+}
+
+func nopLogger() *zap.Logger {
+	return zap.NewNop()
+}
+
+// ── BGP event helpers ─────────────────────────────────────────────────────────
+
+func addedEvent(prefix, nextHop string, communities ...string) bgp.RouteEvent {
 	return bgp.RouteEvent{
 		Type: bgp.RouteAdded,
 		Route: bgp.Route{
@@ -172,12 +178,14 @@ func addedRoute(prefix, nextHop string, communities ...string) bgp.RouteEvent {
 	}
 }
 
-func withdrawnRoute(prefix string) bgp.RouteEvent {
+func withdrawnEvent(prefix string) bgp.RouteEvent {
 	return bgp.RouteEvent{
 		Type:  bgp.RouteWithdrawn,
 		Route: bgp.Route{Prefix: prefix},
 	}
 }
+
+// ── overlay builder ───────────────────────────────────────────────────────────
 
 // mkOverlay constructs a NetworkOverlay for tests.
 func mkOverlay(name, community, virtualCIDR string, gateways []v1alpha1.Gateway, edges []v1alpha1.EdgeStatus) v1alpha1.NetworkOverlay {
@@ -194,7 +202,8 @@ func mkOverlay(name, community, virtualCIDR string, gateways []v1alpha1.Gateway,
 	}
 }
 
-// hasSyncCall returns the syncCall for tableID if present.
+// ── assertion helpers ─────────────────────────────────────────────────────────
+
 func hasSyncCall(calls []syncCall, tableID uint32) (syncCall, bool) {
 	for _, c := range calls {
 		if c.tableID == tableID {
@@ -204,7 +213,6 @@ func hasSyncCall(calls []syncCall, tableID uint32) (syncCall, bool) {
 	return syncCall{}, false
 }
 
-// syncDesiredContains returns true if the desired slice contains a route with the given Dst.
 func syncDesiredContains(desired []routes.Route, dst string) bool {
 	for _, r := range desired {
 		if r.Dst == dst {
@@ -214,7 +222,6 @@ func syncDesiredContains(desired []routes.Route, dst string) bool {
 	return false
 }
 
-// hasEnsureVRF returns the VRF call matching the given name.
 func hasEnsureVRF(calls []routes.VRF, name string) (routes.VRF, bool) {
 	for _, v := range calls {
 		if v.Name == name {
@@ -224,7 +231,6 @@ func hasEnsureVRF(calls []routes.VRF, name string) (routes.VRF, bool) {
 	return routes.VRF{}, false
 }
 
-// hasEnsureAddr reports whether an EnsureAddr call was made with the given VRF and IP.
 func hasEnsureAddr(calls []routes.Addr, vrfName, ip string) bool {
 	for _, a := range calls {
 		if a.VRFName == vrfName && a.IP == ip {
@@ -234,7 +240,6 @@ func hasEnsureAddr(calls []routes.Addr, vrfName, ip string) bool {
 	return false
 }
 
-// hasEnsureRule reports whether an EnsureRule call was made with the given tableID.
 func hasEnsureRule(calls []routes.Rule, tableID uint32) (routes.Rule, bool) {
 	for _, r := range calls {
 		if r.TableID == tableID {
@@ -244,7 +249,6 @@ func hasEnsureRule(calls []routes.Rule, tableID uint32) (routes.Rule, bool) {
 	return routes.Rule{}, false
 }
 
-// hasEnsureBridge reports whether an EnsureBridge call matches overlay+vip.
 func hasEnsureBridge(calls []firewall.Bridge, overlayName, vip string) (firewall.Bridge, bool) {
 	for _, b := range calls {
 		if b.OverlayName == overlayName && b.VirtualIP == vip {
